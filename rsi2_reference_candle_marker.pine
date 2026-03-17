@@ -1,0 +1,59 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0
+// © tradingstrategy1
+
+//@version=5
+indicator("RSI(2) Reference Candle Marker", overlay=true)
+
+// ─────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────
+rsiLength       = input.int(2,    "RSI Length",       minval=1)
+oversoldLevel   = input.float(10, "Oversold Level",   minval=1,  maxval=49, step=0.5)
+overboughtLevel = input.float(95, "Overbought Level", minval=51, maxval=99, step=0.5)
+
+// ─────────────────────────────────────────────
+// RSI CALCULATION
+// ─────────────────────────────────────────────
+rsi = ta.rsi(close, rsiLength)
+
+// ─────────────────────────────────────────────
+// REFERENCE CANDLE DETECTION
+//
+// The Reference Candle is the LAST candle inside an RSI extreme
+// zone — the bar just before RSI crosses back through the threshold.
+//
+// ta.crossover(rsi, oversoldLevel)   → fires on the first bar where
+//     RSI rises ABOVE oversoldLevel.  The Reference Candle is [1],
+//     the bar immediately before this one.
+//
+// ta.crossunder(rsi, overboughtLevel) → fires on the first bar where
+//     RSI drops BELOW overboughtLevel.  Same: Reference Candle is [1].
+//
+// plotshape(..., offset=-1) shifts the shape one bar to the LEFT,
+// so the arrow lands precisely on the Reference Candle rather than
+// on the crossover/crossunder bar itself.
+// ─────────────────────────────────────────────
+
+// Red DOWN arrow below the Reference Candle of each RSI < 10 sequence
+plotshape(ta.crossover(rsi, oversoldLevel),
+     title    = "Short Reference Candle",
+     style    = shape.arrowdown,
+     location = location.belowbar,
+     color    = color.new(color.red, 0),
+     size     = size.small,
+     offset   = -1)
+
+// Green UP arrow above the Reference Candle of each RSI > 95 sequence
+plotshape(ta.crossunder(rsi, overboughtLevel),
+     title    = "Long Reference Candle",
+     style    = shape.arrowup,
+     location = location.abovebar,
+     color    = color.new(color.green, 0),
+     size     = size.small,
+     offset   = -1)
+
+// ─────────────────────────────────────────────
+// BACKGROUND SHADING  ── active zone highlight
+// ─────────────────────────────────────────────
+bgcolor(rsi < oversoldLevel   ? color.new(color.red,   88) : na, title="Oversold Zone")
+bgcolor(rsi > overboughtLevel ? color.new(color.green, 88) : na, title="Overbought Zone")
