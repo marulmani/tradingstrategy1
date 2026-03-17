@@ -1,0 +1,144 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0
+// © tradingstrategy1
+
+//@version=5
+strategy("RSI(2) Exit-Candle Breakout", overlay=true,
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=100,
+     calc_on_every_tick=false)
+
+// ─────────────────────────────────────────────
+// INPUTS
+// ─────────────────────────────────────────────
+rsiLength       = input.int(2,    "RSI Length",         minval=1)
+oversoldLevel   = input.float(10, "Oversold Level",     minval=1,   maxval=49,  step=0.5)
+overboughtLevel = input.float(95, "Overbought Level",   minval=51,  maxval=99,  step=0.5)
+stopLossPct     = input.float(1.0,"Stop Loss %",        minval=0.1, maxval=50,  step=0.1)
+takeProfitPct   = input.float(2.0,"Take Profit %",      minval=0.1, maxval=200, step=0.1)
+
+// ─────────────────────────────────────────────
+// RSI CALCULATION
+// ─────────────────────────────────────────────
+rsi = ta.rsi(close, rsiLength)
+
+// ─────────────────────────────────────────────
+// STATE VARIABLES  (persist across bars)
+// ─────────────────────────────────────────────
+// Flags: are we currently inside an RSI extreme zone?
+var bool inOversold   = false
+var bool inOverbought = false
+
+// Running trackers: updated every bar *inside* the zone.
+// On the crossover/crossunder bar, these hold the last
+// in-zone bar's Low / High — that is the "Exit Candle" level.
+var float potentialLow  = na
+var float potentialHigh = na
+
+// Locked-in breakout levels, set when RSI leaves the zone.
+var float finalLow  = na
+var float finalHigh = na
+
+// ─────────────────────────────────────────────
+// SHORT SETUP  ── RSI below oversoldLevel
+//
+// Logic for "last candle in sequence":
+//   • Every bar that has rsi < oversoldLevel, potentialLow is
+//     overwritten with that bar's Low.
+//   • ta.crossover(rsi, oversoldLevel) fires on the FIRST bar
+//     where rsi rises ABOVE oversoldLevel.  At that moment
+//     potentialLow still holds the Low of the *previous* bar
+//     (the last bar that was inside the zone), which is exactly
+//     the "Exit Candle" Low.  We lock it in as finalLow.
+// ─────────────────────────────────────────────
+
+// 1. On each bar inside the oversold zone — track the candle's Low
+if rsi < oversoldLevel
+    inOversold   := true
+    potentialLow := low          // constantly update; last update = exit candle
+
+// 2. RSI just crossed ABOVE oversoldLevel → zone is over, finalise the level
+if ta.crossover(rsi, oversoldLevel)
+    finalLow     := potentialLow // lock in Exit-Candle Low
+    potentialLow := na           // clear the tracker
+    inOversold   := false
+
+// ─────────────────────────────────────────────
+// LONG SETUP  ── RSI above overboughtLevel
+//
+// Mirror logic:
+//   • potentialHigh updated on every bar rsi > overboughtLevel.
+//   • ta.crossunder(rsi, overboughtLevel) fires on the first bar
+//     below the threshold; potentialHigh = last in-zone High.
+// ─────────────────────────────────────────────
+
+// 1. On each bar inside the overbought zone — track the candle's High
+if rsi > overboughtLevel
+    inOverbought   := true
+    potentialHigh  := high       // constantly update; last update = exit candle
+
+// 2. RSI just crossed BELOW overboughtLevel → zone is over, finalise the level
+if ta.crossunder(rsi, overboughtLevel)
+    finalHigh      := potentialHigh // lock in Exit-Candle High
+    potentialHigh  := na            // clear the tracker
+    inOverbought   := false
+
+// ─────────────────────────────────────────────
+// ENTRY CONDITIONS
+//
+// A breakout is confirmed when a candle *closes* beyond the
+// locked-in level.  We only enter when flat (position_size == 0).
+//
+// After entry the level is reset to na so:
+//   • the plot line disappears (linebr style shows nothing for na)
+//   • we do not re-enter on subsequent closes beyond the same level
+// ─────────────────────────────────────────────
+longCondition  = not na(finalHigh) and close > finalHigh and strategy.position_size == 0
+shortCondition = not na(finalLow)  and close < finalLow  and strategy.position_size == 0
+
+if longCondition
+    strategy.entry("Long",  strategy.long,  comment="Long Breakout")
+    finalHigh := na   // consume the level
+
+if shortCondition
+    strategy.entry("Short", strategy.short, comment="Short Breakout")
+    finalLow  := na   // consume the level
+
+// ─────────────────────────────────────────────
+// EXIT MANAGEMENT  ── Fixed Stop Loss & Take Profit
+//
+// strategy.exit is evaluated every bar while in a position.
+// strategy.position_avg_price is already set from the entry bar,
+// so the absolute SL/TP prices are always based on the actual fill.
+// ─────────────────────────────────────────────
+if strategy.position_size > 0
+    strategy.exit("Long Exit", "Long",
+         stop  = strategy.position_avg_price * (1 - stopLossPct  / 100),
+         limit = strategy.position_avg_price * (1 + takeProfitPct / 100))
+
+if strategy.position_size < 0
+    strategy.exit("Short Exit", "Short",
+         stop  = strategy.position_avg_price * (1 + stopLossPct  / 100),
+         limit = strategy.position_avg_price * (1 - takeProfitPct / 100))
+
+// ─────────────────────────────────────────────
+// VISUALS
+//
+// plot.style_linebr:
+//   • draws a continuous horizontal line while the value is not na
+//   • automatically breaks (no line) when the value becomes na
+//   This means each level appears only after it is locked in and
+//   disappears the moment it is consumed by an entry.
+// ─────────────────────────────────────────────
+plot(finalHigh, "Active Long Level",
+     color=color.new(color.green, 0),
+     style=plot.style_linebr,
+     linewidth=2)
+
+plot(finalLow,  "Active Short Level",
+     color=color.new(color.red, 0),
+     style=plot.style_linebr,
+     linewidth=2)
+
+// Optional: shade the background while inside an extreme zone
+bgcolor(inOversold   ? color.new(color.red,   88) : na, title="Oversold Zone")
+bgcolor(inOverbought ? color.new(color.green, 88) : na, title="Overbought Zone")
